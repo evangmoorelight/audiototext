@@ -663,9 +663,9 @@ footer strong { color: var(--blue); }
 
   const MAX_BYTES = 50 * 1024 * 1024;       // largest file accepted
   const DIRECT_LIMIT = 4 * 1024 * 1024;     // Vercel rejects request bodies over ~4.5 MB
-  const CHUNK_SECONDS = 600;                // 10 minutes of audio per upload
+  const CHUNK_SECONDS = 180;                // 3 minutes of audio per upload
   const TARGET_RATE = 16000;                // speech-quality sample rate
-  const MP3_KBPS = 32;                      // ~2.4 MB per 10-minute chunk
+  const MP3_KBPS = 32;                      // ~0.7 MB per 3-minute chunk
 
   let selectedFile = null;
   let previewUrl = null;
@@ -958,14 +958,22 @@ footer strong { color: var(--blue); }
     }
 
     let data;
+    let rawText = "";
 
     try {
-      data = await response.json();
+      rawText = await response.text();
+      data = JSON.parse(rawText);
     } catch {
       if (response.status === 413) {
         throw new Error("The upload was too large for the server.");
       }
-      throw new Error("The server returned an invalid response.");
+      if (response.status === 504 || /timeout|timed out/i.test(rawText)) {
+        throw new Error("The server timed out on this part (error " + response.status + ").");
+      }
+      throw new Error(
+        "Server error " + response.status + ": " +
+        (rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "no details")
+      );
     }
 
     if (!response.ok) {
@@ -1017,7 +1025,7 @@ footer strong { color: var(--blue); }
         model = data.model;
 
       } else {
-        // Large file: shrink to mono 16 kHz MP3 and send in 10-minute pieces.
+        // Large file: shrink to mono 16 kHz MP3 and send in 3-minute pieces.
         setProgress("Reading audio (this can take a minute)...", 5);
         await sleep(30);
 
