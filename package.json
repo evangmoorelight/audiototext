@@ -1,0 +1,10 @@
+{
+  "name": "audio-to-text-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI audio transcription website with timestamps and transcript exports",
+  "engines": {
+    "node": ">=20"
+  }
+}
