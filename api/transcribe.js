@@ -149,7 +149,11 @@ export default async function handler(req, res) {
     return sendJson(res, 405, { error: "Method not allowed. Use POST." });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  // Strip invisible/non-ASCII characters (e.g. U+200E, code 8206) that can
+  // sneak in when the key is copy-pasted. HTTP headers only allow plain ASCII.
+  const apiKey = (process.env.OPENAI_API_KEY || "")
+    .replace(/[^\x20-\x7E]/g, "")
+    .trim();
 
   if (!apiKey) {
     return sendJson(res, 500, {
@@ -159,137 +163,4 @@ export default async function handler(req, res) {
 
   const contentType = req.headers["content-type"] || "";
 
-  if (!contentType.toLowerCase().includes("multipart/form-data")) {
-    return sendJson(res, 400, {
-      error: "Please upload an audio file using the upload form."
-    });
-  }
-
-  try {
-    const rawBody = await readRequest(req);
-    const form = parseMultipart(rawBody, contentType);
-
-    const file = form.file;
-
-    if (!file || !file.data || !file.filename) {
-      return sendJson(res, 400, {
-        error: "No audio file was received."
-      });
-    }
-
-    if (!file.data.length) {
-      return sendJson(res, 400, {
-        error: "The selected audio file is empty."
-      });
-    }
-
-    if (file.data.length > MAX_FILE_SIZE) {
-      return sendJson(res, 413, {
-        error: "The file exceeds the 25 MB upload limit."
-      });
-    }
-
-    const extension = extensionOf(file.filename);
-
-    if (!ALLOWED_EXTENSIONS.has(extension)) {
-      return sendJson(res, 400, {
-        error: "Unsupported file extension. Please upload MP3, WAV, M4A, MP4, WEBM, OGG, FLAC, or MPEG audio."
-      });
-    }
-
-    const language = String(form.language || "auto");
-    const context = String(form.context || "").trim().slice(0, 500);
-    const wantTimestamps = String(form.timestamps || "true") === "true";
-
-    const upload = new FormData();
-
-    upload.append(
-      "file",
-      new Blob([file.data], {
-        type: file.contentType || "application/octet-stream"
-      }),
-      file.filename
-    );
-
-    /*
-      gpt-4o-transcribe is used for the primary transcript.
-      For word-level timestamps, use whisper-1, which supports
-      verbose_json and timestamp_granularities.
-    */
-
-    const model = wantTimestamps ? "whisper-1" : "gpt-4o-transcribe";
-
-    upload.append("model", model);
-
-    if (language !== "auto") {
-      upload.append("language", language);
-    }
-
-    if (context) {
-      upload.append("prompt", context);
-    }
-
-    if (wantTimestamps) {
-      upload.append("response_format", "verbose_json");
-      upload.append("timestamp_granularities[]", "segment");
-      upload.append("timestamp_granularities[]", "word");
-    } else {
-      upload.append("response_format", "json");
-    }
-
-    const upstream = await fetch(
-      "https://api.openai.com/v1/audio/transcriptions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: upload
-      }
-    );
-
-    const responseText = await upstream.text();
-
-    let result;
-
-    try {
-      result = JSON.parse(responseText);
-    } catch {
-      result = { error: { message: responseText || "Invalid transcription response." } };
-    }
-
-    if (!upstream.ok) {
-      const message =
-        result?.error?.message ||
-        "The transcription service could not process this audio.";
-
-      const status = upstream.status === 429 ? 429 :
-        upstream.status >= 500 ? 502 : 400;
-
-      return sendJson(res, status, {
-        error: message
-      });
-    }
-
-    const text = typeof result.text === "string" ? result.text : "";
-
-    return sendJson(res, 200, {
-      text,
-      language: result.language || language,
-      duration: result.duration || null,
-      segments: wantTimestamps ? normalizeSegments(result) : [],
-      model
-    });
-
-  } catch (error) {
-    console.error("Transcription error:", error);
-
-    if (res.writableEnded) return;
-
-    const status = error.statusCode || 500;
-
-    return sendJson(res, status, {
-      error: error.message || "An unexpected server error occurred."
-    });
-  }
-}
+  if (!contentType.toL
